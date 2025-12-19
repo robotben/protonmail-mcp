@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.log
+.env
+config/protonmail.config.json
+*.tsbuildinfo
+.DS_Store

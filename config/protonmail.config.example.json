@@ -1,0 +1,48 @@
+{
+  "protonmail": {
+    "imap": {
+      "host": "127.0.0.1",
+      "port": 1143,
+      "secure": false,
+      "tls": {
+        "rejectUnauthorized": false,
+        "minVersion": "TLSv1.2"
+      }
+    },
+    "smtp": {
+      "host": "127.0.0.1",
+      "port": 1025,
+      "secure": false,
+      "requireTLS": true,
+      "tls": {
+        "rejectUnauthorized": false,
+        "minVersion": "TLSv1.2"
+      }
+    },
+    "auth": {
+      "user": "your-email@protonmail.com",
+      "pass": "your-bridge-password"
+    }
+  },
+  "server": {
+    "transport": "stdio"
+  },
+  "connection": {
+    "poolSize": 3,
+    "idleTimeout": 300000,
+    "connectionTimeout": 30000,
+    "maxRetries": 3,
+    "retryDelay": 1000
+  },
+  "cache": {
+    "enabled": true,
+    "ttl": 60,
+    "maxSize": 1000
+  },
+  "limits": {
+    "defaultPageSize": 50,
+    "maxPageSize": 500,
+    "maxSearchResults": 1000,
+    "maxEmailBodySize": 1048576
+  }
+}
