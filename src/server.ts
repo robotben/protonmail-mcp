@@ -91,9 +91,35 @@ async function main() {
   const httpServer = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
 
+    // REST endpoint for n8n digest workflow
+    if (url.pathname === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+
+    if (url.pathname === '/emails' && req.method === 'GET') {
+      try {
+        const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+        const since = url.searchParams.get('since');
+        const emails = await services.email.searchEmails({
+          folder: 'INBOX',
+          isUnread: true,
+          dateFrom: since || new Date(Date.now() - 86400000).toISOString(),
+          limit
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, emails, count: emails.length }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: (error as Error).message }));
+      }
+      return;
+    }
+
     if (url.pathname !== '/mcp') {
       res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found. MCP endpoint is /mcp' }));
+      res.end(JSON.stringify({ error: 'Not found. Use /mcp for MCP protocol or /emails for REST.' }));
       return;
     }
 
