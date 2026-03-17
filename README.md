@@ -18,7 +18,7 @@ An MCP (Model Context Protocol) server that connects to ProtonMail via Bridge, e
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/protonmail-mcp.git
+git clone https://github.com/robotben/protonmail-mcp.git
 cd protonmail-mcp
 npm install
 npm run build
@@ -45,20 +45,39 @@ npm run build
 
    > **Note**: Use the Bridge password from ProtonMail Bridge app (not your account password).
 
+## Running the Server
+
+```bash
+npm start
+```
+
+The server listens on port `3000` by default. Set the `PORT` environment variable to change it:
+
+```bash
+PORT=8080 npm start
+```
+
+MCP endpoint: `http://localhost:3000/mcp`
+
 ## Usage with Claude Desktop
 
-Add to your Claude Desktop config (`claude_desktop_config.json`):
+The server uses the **MCP Streamable HTTP transport** (spec 2025-03-26), so configure Claude Desktop with a URL instead of a command:
 
 ```json
 {
   "mcpServers": {
     "protonmail": {
-      "command": "node",
-      "args": ["/path/to/protonmail-mcp/dist/server.js"]
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
 ```
+
+> **Note**: Start the server before launching Claude Desktop (`npm start`).
+
+### Legacy stdio (not supported)
+
+This server no longer supports stdio transport. If you need stdio, use an earlier version.
 
 ## Available Tools (22)
 

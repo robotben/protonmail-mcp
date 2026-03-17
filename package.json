@@ -24,7 +24,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "imapflow": "^1.0.164",
     "mailparser": "^3.7.1",
     "nodemailer": "^6.9.16",

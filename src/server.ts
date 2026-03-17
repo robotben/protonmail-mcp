@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import { createServer } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { loadConfig } from './config/config.js';
 import { ImapConnectionPool } from './connection/imap-pool.js';
 import { SMTPClient } from './connection/smtp-client.js';
@@ -65,6 +66,7 @@ async function main() {
   const shutdown = async () => {
     console.error(`[${SERVER_NAME}] Shutting down...`);
     try {
+      await transport.close();
       await imapPool.close();
       await smtpClient.close();
     } catch {
@@ -76,17 +78,51 @@ async function main() {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  // Connect transport and start server
-  const transport = new StdioServerTransport();
+  // Create Streamable HTTP transport (stateless — session state is managed by the IMAP pool)
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  });
 
-  try {
-    await server.connect(transport);
-    console.error(`[${SERVER_NAME}] Server started successfully`);
+  await server.connect(transport);
+
+  // HTTP server — all MCP traffic is routed through /mcp
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+  const httpServer = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
+
+    if (url.pathname !== '/mcp') {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not found. MCP endpoint is /mcp' }));
+      return;
+    }
+
+    // Parse body for POST requests before handing off to the transport
+    let body: unknown = undefined;
+    if (req.method === 'POST') {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(chunk as Buffer);
+      }
+      const raw = Buffer.concat(chunks).toString('utf-8');
+      if (raw) {
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+          return;
+        }
+      }
+    }
+
+    await transport.handleRequest(req, res, body);
+  });
+
+  httpServer.listen(PORT, () => {
+    console.error(`[${SERVER_NAME}] Server started on http://localhost:${PORT}/mcp`);
     console.error(`[${SERVER_NAME}] Connected to ProtonMail Bridge at ${config.protonmail.imap.host}`);
-  } catch (error) {
-    console.error(`[${SERVER_NAME}] Failed to start server:`, (error as Error).message);
-    await shutdown();
-  }
+  });
 }
 
 main().catch((error) => {
