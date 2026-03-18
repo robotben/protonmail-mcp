@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createServer } from 'node:http';
+import express from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { loadConfig } from './config/config.js';
@@ -77,72 +77,62 @@ async function main() {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  // HTTP server — all MCP traffic is routed through /mcp
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  const httpServer = createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
+  // Express app — matches obsidian-http-mcp architecture
+  const app = express();
+  app.use(express.json({ limit: '10mb' }));
 
-    // REST endpoint for n8n digest workflow
-    if (url.pathname === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok' }));
-      return;
-    }
-
-    if (url.pathname === '/emails' && req.method === 'GET') {
-      try {
-        const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
-        const since = url.searchParams.get('since');
-        const emails = await services.email.searchEmails({
-          folder: 'INBOX',
-          isUnread: true,
-          dateFrom: since || new Date(Date.now() - 86400000).toISOString(),
-          limit
-        });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, emails, count: emails.length }));
-      } catch (error) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: (error as Error).message }));
-      }
-      return;
-    }
-
-    if (url.pathname !== '/mcp') {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found. Use /mcp for MCP protocol or /emails for REST.' }));
-      return;
-    }
-
-    // Parse body for POST requests before handing off to the transport
-    let body: unknown = undefined;
-    if (req.method === 'POST') {
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) {
-        chunks.push(chunk as Buffer);
-      }
-      const raw = Buffer.concat(chunks).toString('utf-8');
-      if (raw) {
-        try {
-          body = JSON.parse(raw);
-        } catch {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Invalid JSON body' }));
-          return;
-        }
-      }
-    }
-
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
-    await server.connect(transport);
-    await transport.handleRequest(req, res, body);  
-  
+  // Health check
+  app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  httpServer.listen(PORT, () => {
+  // REST endpoint for n8n digest workflow
+  app.get('/emails', async (req, res) => {
+    try {
+      const limit = parseInt((req.query.limit as string) ?? '50', 10);
+      const since = req.query.since as string | undefined;
+      const emails = await services.email.searchEmails({
+        folder: 'INBOX',
+        isUnread: true,
+        dateFrom: since || new Date(Date.now() - 86400000).toISOString(),
+        limit
+      });
+      res.json({ success: true, emails, count: emails.length });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  });
+
+  // MCP endpoint — Streamable HTTP, stateless, plain JSON responses
+  app.post('/mcp', async (req, res) => {
+    try {
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableJsonResponse: true,
+      });
+      res.on('close', () => {
+        transport.close();
+      });
+      await server.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } catch (error) {
+      console.error(`[${SERVER_NAME}] MCP request error:`, error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: error instanceof Error ? error.message : 'Internal error',
+          },
+          id: null,
+        });
+      }
+    }
+  });
+
+  app.listen(PORT, () => {
     console.error(`[${SERVER_NAME}] Server started on http://localhost:${PORT}/mcp`);
     console.error(`[${SERVER_NAME}] Connected to ProtonMail Bridge at ${config.protonmail.imap.host}`);
   });
