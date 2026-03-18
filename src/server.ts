@@ -66,7 +66,6 @@ async function main() {
   const shutdown = async () => {
     console.error(`[${SERVER_NAME}] Shutting down...`);
     try {
-      await transport.close();
       await imapPool.close();
       await smtpClient.close();
     } catch {
@@ -77,13 +76,6 @@ async function main() {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
-
-  // Create Streamable HTTP transport (stateless — session state is managed by the IMAP pool)
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-  });
-
-  await server.connect(transport);
 
   // HTTP server — all MCP traffic is routed through /mcp
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -142,7 +134,12 @@ async function main() {
       }
     }
 
-    await transport.handleRequest(req, res, body);
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, body);  
+  
   });
 
   httpServer.listen(PORT, () => {
