@@ -7,7 +7,16 @@ import {
 import { z } from 'zod';
 import type { Services } from '../services/index.js';
 import type { ToolResponse } from '../types.js';
-import { createSuccessResponse, errorToResponse } from '../utils/errors.js';
+import { ErrorType } from '../types.js';
+import type { ToolPolicy } from '../security.js';
+import { createErrorResponse, createSuccessResponse, errorToResponse } from '../utils/errors.js';
+
+// IMAP accepts sequence sets such as "1:*" wherever a UID is expected. Only plain
+// positive integers are allowed here, and the batch size is capped, so a single
+// call cannot address a whole folder.
+const UidSchema = z.string().regex(/^[1-9]\d{0,9}$/, 'UID must be a positive integer');
+const UidListSchema = z.array(UidSchema).min(1).max(500);
+const RecipientListSchema = z.array(z.string().min(1).max(320)).min(1).max(100);
 
 // Tool input schemas
 const ListEmailsSchema = z.object({
@@ -19,13 +28,13 @@ const ListEmailsSchema = z.object({
 
 const GetEmailSchema = z.object({
   folder: z.string().default('INBOX'),
-  uid: z.string(),
+  uid: UidSchema,
   include_attachments: z.boolean().default(false)
 });
 
 const GetEmailHeadersSchema = z.object({
   folder: z.string().default('INBOX'),
-  uid: z.string()
+  uid: UidSchema
 });
 
 const SearchEmailsSchema = z.object({
@@ -48,18 +57,18 @@ const GetUnreadCountSchema = z.object({
 
 const MarkAsReadSchema = z.object({
   folder: z.string().default('INBOX'),
-  uids: z.array(z.string())
+  uids: UidListSchema
 });
 
 const MarkAsUnreadSchema = z.object({
   folder: z.string().default('INBOX'),
-  uids: z.array(z.string())
+  uids: UidListSchema
 });
 
 const SendEmailSchema = z.object({
-  to: z.array(z.string()),
-  cc: z.array(z.string()).optional(),
-  bcc: z.array(z.string()).optional(),
+  to: RecipientListSchema,
+  cc: RecipientListSchema.optional(),
+  bcc: RecipientListSchema.optional(),
   subject: z.string(),
   body: z.string().optional(),
   html_body: z.string().optional()
@@ -67,7 +76,7 @@ const SendEmailSchema = z.object({
 
 const ReplyToEmailSchema = z.object({
   folder: z.string().default('INBOX'),
-  uid: z.string(),
+  uid: UidSchema,
   body: z.string(),
   html_body: z.string().optional(),
   reply_all: z.boolean().default(false)
@@ -75,8 +84,8 @@ const ReplyToEmailSchema = z.object({
 
 const ForwardEmailSchema = z.object({
   folder: z.string().default('INBOX'),
-  uid: z.string(),
-  to: z.array(z.string()),
+  uid: UidSchema,
+  to: RecipientListSchema,
   body: z.string().optional()
 });
 
@@ -99,7 +108,7 @@ const RenameFolderSchema = z.object({
 const MoveEmailsSchema = z.object({
   source_folder: z.string(),
   target_folder: z.string(),
-  uids: z.array(z.string())
+  uids: UidListSchema
 });
 
 const ListLabelsSchema = z.object({});
@@ -111,13 +120,13 @@ const CreateLabelSchema = z.object({
 
 const ApplyLabelsSchema = z.object({
   source_folder: z.string().default('INBOX'),
-  uids: z.array(z.string()),
+  uids: UidListSchema,
   labels: z.array(z.string())
 });
 
 const RemoveLabelsSchema = z.object({
   folder: z.string().default('INBOX'),
-  uids: z.array(z.string()),
+  uids: UidListSchema,
   labels: z.array(z.string())
 });
 
@@ -141,7 +150,7 @@ const IdentifyImportantEmailsSchema = z.object({
 
 const DeleteEmailsSchema = z.object({
   folder: z.string().default('INBOX'),
-  uids: z.array(z.string())
+  uids: UidListSchema
 });
 
 // Tool definitions
@@ -446,15 +455,37 @@ const tools: Tool[] = [
   }
 ];
 
-export function setupTools(server: Server, services: Services): void {
+export function setupTools(server: Server, services: Services, policy: ToolPolicy): void {
+  // Fail closed on typos: a misspelled name in MCP_DISABLED_TOOLS would otherwise
+  // leave the tool the operator meant to disable fully available.
+  const knownTools = new Set(tools.map(t => t.name));
+  for (const name of policy.disabledTools) {
+    if (!knownTools.has(name)) {
+      throw new Error(`MCP_DISABLED_TOOLS names an unknown tool: "${name}"`);
+    }
+  }
+  const enabledTools = tools.filter(t => !policy.disabledTools.has(t.name));
+
   // List available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools };
+    return { tools: enabledTools };
   });
 
   // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+
+    if (policy.disabledTools.has(name)) {
+      const disabled = createErrorResponse(
+        name,
+        `Tool "${name}" is disabled by server policy`,
+        ErrorType.OPERATION_FAILED
+      );
+      return {
+        content: disabled.content,
+        isError: disabled.isError
+      };
+    }
 
     try {
       const result = await handleToolCall(name, args || {}, services);
