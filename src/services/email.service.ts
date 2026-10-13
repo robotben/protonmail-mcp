@@ -13,20 +13,25 @@ import type {
 } from '../types.js';
 import { NotFoundError, IMAPError } from '../utils/errors.js';
 import { ErrorType as ErrorTypeEnum } from '../types.js';
+import { assertRecipientsAllowed } from '../security.js';
+import type { ToolPolicy } from '../security.js';
 
 export class EmailService {
   private imapPool: ImapConnectionPool;
   private smtpClient: SMTPClient;
   private limits: LimitsConfig;
+  private policy?: ToolPolicy;
 
   constructor(
     imapPool: ImapConnectionPool,
     smtpClient: SMTPClient,
-    limits: LimitsConfig
+    limits: LimitsConfig,
+    policy?: ToolPolicy
   ) {
     this.imapPool = imapPool;
     this.smtpClient = smtpClient;
     this.limits = limits;
+    this.policy = policy;
   }
 
   async listEmails(
@@ -198,6 +203,15 @@ export class EmailService {
   }
 
   async sendEmail(options: SendEmailOptions): Promise<{ messageId: string }> {
+    // Every send path (send_email, reply_to_email, forward_email) ends up here.
+    if (this.policy) {
+      assertRecipientsAllowed(this.policy, [
+        ...options.to,
+        ...(options.cc ?? []),
+        ...(options.bcc ?? [])
+      ]);
+    }
+
     const result = await this.smtpClient.sendMail(options);
     return { messageId: result.messageId };
   }

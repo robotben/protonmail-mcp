@@ -1,0 +1,10 @@
+node_modules
+.git
+.claude
+.env
+.env.*
+config/protonmail.config.json
+*.log
+*.tsbuildinfo
+src
+tsconfig.json

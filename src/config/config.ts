@@ -3,22 +3,38 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 import type { ProtonMailConfig } from '../types.js';
+import { isLoopbackHost } from '../security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Zod schema for configuration validation
+// Bridge presents a self-signed certificate, so certificate verification is
+// skipped by default only when Bridge is on loopback. For any other host it is
+// on unless explicitly disabled.
 const TLSConfigSchema = z.object({
-  rejectUnauthorized: z.boolean().default(false),
-  minVersion: z.string().default('TLSv1.2')
+  rejectUnauthorized: z.boolean().optional(),
+  minVersion: z.enum(['TLSv1.2', 'TLSv1.3']).default('TLSv1.2')
 });
+
+function resolveTlsDefaults<T extends { host: string; tls: { rejectUnauthorized?: boolean } }>(
+  config: T
+): T & { tls: { rejectUnauthorized: boolean } } {
+  return {
+    ...config,
+    tls: {
+      ...config.tls,
+      rejectUnauthorized: config.tls.rejectUnauthorized ?? !isLoopbackHost(config.host)
+    }
+  };
+}
 
 const IMAPConfigSchema = z.object({
   host: z.string().default('127.0.0.1'),
   port: z.number().default(1143),
   secure: z.boolean().default(false),
   tls: TLSConfigSchema.default({})
-});
+}).transform(resolveTlsDefaults);
 
 const SMTPConfigSchema = z.object({
   host: z.string().default('127.0.0.1'),
@@ -26,7 +42,7 @@ const SMTPConfigSchema = z.object({
   secure: z.boolean().default(false),
   requireTLS: z.boolean().default(true),
   tls: TLSConfigSchema.default({})
-});
+}).transform(resolveTlsDefaults);
 
 const AuthConfigSchema = z.object({
   user: z.string().min(1, 'Email address is required'),
@@ -72,6 +88,30 @@ const ProtonMailConfigSchema = z.object({
   limits: LimitsConfigSchema.default({})
 });
 
+function envBool(name: string): boolean | undefined {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (!value) return undefined;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error(`${name} must be "true" or "false"`);
+}
+
+function warnOnInsecureTls(config: ProtonMailConfig): void {
+  const services = [
+    ['IMAP', config.protonmail.imap],
+    ['SMTP', config.protonmail.smtp]
+  ] as const;
+
+  for (const [name, service] of services) {
+    if (!service.tls.rejectUnauthorized && !isLoopbackHost(service.host)) {
+      console.error(
+        `[protonmail-mcp] WARNING: TLS certificate verification is disabled for ${name} host "${service.host}". ` +
+        'The Bridge password can be intercepted on the network.'
+      );
+    }
+  }
+}
+
 function findConfigFile(): string | null {
   const possiblePaths = [
     process.env.PROTONMAIL_CONFIG,
@@ -102,7 +142,7 @@ export function loadConfig(): ProtonMailConfig {
             port: parseInt(process.env.PROTONMAIL_IMAP_PORT || '1143', 10),
             secure: process.env.PROTONMAIL_IMAP_SECURE === 'true',
             tls: {
-              rejectUnauthorized: false,
+              rejectUnauthorized: envBool('PROTONMAIL_IMAP_TLS_REJECT_UNAUTHORIZED'),
               minVersion: 'TLSv1.2'
             }
           },
@@ -112,7 +152,7 @@ export function loadConfig(): ProtonMailConfig {
             secure: process.env.PROTONMAIL_SMTP_SECURE === 'true',
             requireTLS: true,
             tls: {
-              rejectUnauthorized: false,
+              rejectUnauthorized: envBool('PROTONMAIL_SMTP_TLS_REJECT_UNAUTHORIZED'),
               minVersion: 'TLSv1.2'
             }
           },
@@ -131,6 +171,7 @@ export function loadConfig(): ProtonMailConfig {
       if (!result.success) {
         throw new Error(`Invalid configuration from environment: ${result.error.message}`);
       }
+      warnOnInsecureTls(result.data);
       return result.data;
     }
 
@@ -148,6 +189,7 @@ export function loadConfig(): ProtonMailConfig {
       throw new Error(`Invalid configuration: ${result.error.message}`);
     }
 
+    warnOnInsecureTls(result.data);
     return result.data;
   } catch (error) {
     if (error instanceof SyntaxError) {

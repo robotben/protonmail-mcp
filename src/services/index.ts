@@ -5,6 +5,7 @@ import { FolderService } from './folder.service.js';
 import { LabelService } from './label.service.js';
 import { TrendService } from './trend.service.js';
 import type { ProtonMailConfig } from '../types.js';
+import type { ToolPolicy } from '../security.js';
 
 export interface Services {
   email: EmailService;
@@ -16,10 +17,11 @@ export interface Services {
 export function createServices(
   imapPool: ImapConnectionPool,
   smtpClient: SMTPClient,
-  config: ProtonMailConfig
+  config: ProtonMailConfig,
+  policy?: ToolPolicy
 ): Services {
   const folderService = new FolderService(imapPool);
-  const emailService = new EmailService(imapPool, smtpClient, config.limits);
+  const emailService = new EmailService(imapPool, smtpClient, config.limits, policy);
   const labelService = new LabelService(imapPool, folderService);
   const trendService = new TrendService(emailService, folderService);
 

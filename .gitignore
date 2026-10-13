@@ -5,3 +5,5 @@ dist/
 config/protonmail.config.json
 *.tsbuildinfo
 .DS_Store
+.env.*
+!.env.example

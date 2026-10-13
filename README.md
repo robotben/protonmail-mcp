@@ -11,7 +11,7 @@ An MCP (Model Context Protocol) server that connects to ProtonMail via Bridge, e
 
 ## Requirements
 
-- Node.js >= 18
+- Node.js >= 20
 - [ProtonMail Bridge](https://proton.me/mail/bridge) installed and running
 - ProtonMail account (Plus, Unlimited, or Business)
 
@@ -20,9 +20,11 @@ An MCP (Model Context Protocol) server that connects to ProtonMail via Bridge, e
 ```bash
 git clone https://github.com/robotben/protonmail-mcp.git
 cd protonmail-mcp
-npm install
+npm ci --ignore-scripts
 npm run build
 ```
+
+`--ignore-scripts` skips dependency install hooks. None are needed to build or run this server.
 
 ## Configuration
 
@@ -51,13 +53,47 @@ npm run build
 npm start
 ```
 
-The server listens on port `3000` by default. Set the `PORT` environment variable to change it:
+The server listens on `127.0.0.1:3000` by default (loopback only). Set the `PORT` environment variable to change the port:
 
 ```bash
 PORT=8080 npm start
 ```
 
 MCP endpoint: `http://localhost:3000/mcp`
+
+## Security
+
+This server can read, send, and delete all mail in the account, so treat access to it like access to the mailbox.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MCP_HOST` | `127.0.0.1` | Address to bind. Any non-loopback value requires `MCP_AUTH_TOKEN`; the server refuses to start without it. |
+| `MCP_AUTH_TOKEN` | unset | If set (16+ characters), `/mcp` and `/emails` require `Authorization: Bearer <token>`. |
+| `MCP_ALLOWED_HOSTS` | unset | Comma-separated extra `Host` header names to accept (e.g. your public hostname). Required when serving through a proxy or tunnel with host checking on. |
+| `MCP_READ_ONLY` | `false` | `true` disables every tool that sends mail or changes the mailbox. |
+| `MCP_DISABLED_TOOLS` | unset | Comma-separated tool names to disable. An unknown name stops startup. |
+| `MCP_ALLOWED_RECIPIENTS` | unset | Comma-separated `user@example.com` or `@example.com` entries. When set, `send_email`, `reply_to_email` and `forward_email` can only reach these recipients. |
+
+- On loopback, requests whose `Host` header is not `localhost`, `127.0.0.1` or `[::1]` are rejected (this blocks DNS-rebinding from web pages).
+- If you expose the server beyond this machine (tunnel, reverse proxy, container), set `MCP_AUTH_TOKEN` and put it behind TLS.
+- Email content is untrusted input to the model. A malicious message can try to make an assistant forward or delete mail. `MCP_READ_ONLY`, `MCP_DISABLED_TOOLS` and `MCP_ALLOWED_RECIPIENTS` limit the damage.
+- Bridge uses a self-signed certificate, so certificate verification is off by default **only** when the Bridge host is loopback. For any other host it is on; override per service with `PROTONMAIL_IMAP_TLS_REJECT_UNAUTHORIZED` / `PROTONMAIL_SMTP_TLS_REJECT_UNAUTHORIZED` (`true`/`false`) or `tls.rejectUnauthorized` in the config file.
+- Tools that take message UIDs accept only plain positive integers, at most 500 per call.
+
+### Docker
+
+Build `dist/` first (`npm run build`), then:
+
+```bash
+docker build -t protonmail-mcp .
+docker run --rm -p 127.0.0.1:3000:3000 \
+  -e MCP_AUTH_TOKEN=<random 16+ character token> \
+  -e PROTONMAIL_USER=you@protonmail.com -e PROTONMAIL_PASS=<bridge password> \
+  -e PROTONMAIL_IMAP_HOST=<bridge host> -e PROTONMAIL_SMTP_HOST=<bridge host> \
+  protonmail-mcp
+```
+
+The image runs as a non-root user and contains no credentials. Bridge only listens on loopback by default, so a container needs a Bridge instance it can reach (not `127.0.0.1`).
 
 ## Usage with Claude Desktop
 
@@ -79,7 +115,7 @@ The server uses the **MCP Streamable HTTP transport** (spec 2025-03-26), so conf
 
 This server no longer supports stdio transport. If you need stdio, use an earlier version.
 
-## Available Tools (22)
+## Available Tools (23)
 
 ### Email Reading
 | Tool | Description |
